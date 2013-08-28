@@ -10,9 +10,7 @@ local function fileexists(filename)
    end
 end
 
-function parse(filename)
-   local name = paths.basename(filename)
-
+local function parse(filename)
    local outname = os.tmpname()
    -- DEBUG: system dependent
    local ret = os.execute(string.format('gcc -ansi -E %s -o %s', filename, outname))
@@ -27,7 +25,7 @@ function parse(filename)
    return res
 end
    
-function preprocess(rootfilename, files)
+local function preprocess(rootfilename, files)
    files = files or {}
 
    local reader = {"local readcheader = require 'readcheader'\n"}
@@ -78,6 +76,49 @@ function preprocess(rootfilename, files)
    return files, table.concat(reader, '\n')
 end
 
+local function finddefinitions(filename, defs, filters)
+   local defs = defs or {}
+   local filters = filters or {'.'}
+   local lines = {}
+   for line in io.lines(filename) do
+      table.insert(lines, line)
+      local var, val = line:match('^%s*#%s*define%s+([^%s%(%)]+)%s+(.*)$')
+      if var and val then
+         table.insert(lines, string.format('CPPFFILUADEF VAR_%s %s', var, val))
+      end
+   end
+
+   local tmpname = os.tmpname()
+   os.remove(tmpname)
+   tmpname = tmpname .. '.h'
+
+   local f = io.open(tmpname, 'w')
+   for _, line in ipairs(lines) do
+      f:write(line)
+      f:write('\n')
+   end
+   f:close()
+
+   local out = parse(tmpname)
+   if out then
+      for line in out:gmatch('[^\n\r]+') do
+         local var, val = line:match('^CPPFFILUADEF%s+VAR_(%S+)%s+(%S+)$')
+         if var and val and tonumber(val) then
+            for _, filter in ipairs(filters) do
+               if var:match(filter) then
+                  defs[var] = val
+                  break
+               end
+            end
+         end
+      end
+   end
+
+   os.remove(tmpname)
+
+   return defs
+end
+
 local files, reader = preprocess(arg[1])
 
 local function c2luaname(filename)
@@ -85,6 +126,14 @@ local function c2luaname(filename)
    assert(luafilename ~= filename)
    luafilename = 'include' .. luafilename
    return luafilename
+end
+
+local function tblsize(tbl)
+   local n = 0
+   for k,v in pairs(tbl) do
+      n = n + 1
+   end
+   return n
 end
 
 local function maxlines(lines)
@@ -95,7 +144,11 @@ local function maxlines(lines)
    return maxl
 end
 
+local defs = {}
+
 for filename, lines in pairs(files) do
+   finddefinitions(filename, defs)
+
    filename = 'include' .. filename
    os.execute(string.format('mkdir -p %s', paths.dirname(filename)))
 
@@ -133,3 +186,12 @@ for filename, lines in pairs(files) do
 end
 
 print(reader)
+
+if tblsize(defs) > 0 then
+   print()
+   print('local defs = {}')
+   for val, var in pairs(defs) do
+      print(string.format('defs["%s"] = %s', val, var))
+   end
+   print('return defs')
+end
