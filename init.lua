@@ -1,3 +1,4 @@
+local compiler = require 'gcc'
 require 'paths'
 
 local function fileexists(filename)
@@ -9,27 +10,12 @@ local function fileexists(filename)
       return false
    end
 end
-
-local function parse(filename)
-   local outname = os.tmpname()
-   -- DEBUG: system dependent
-   local ret = os.execute(string.format('gcc -ansi -E %s -o %s', filename, outname))
-   local res
-   if ret == 0 then
-      local f = io.open(outname)
-      res = f:read('*all')
-      f:close()
-   end
-   os.remove(outname)
-   
-   return res
-end
    
 local function preprocess(rootfilename, files)
    files = files or {}
 
    local reader = {"local readcheader = require 'readcheader'\n"}
-   local out = parse(rootfilename)   
+   local out = compiler.parse{filename=rootfilename}
    local lineno, filename
    local readfilename
    local readfileargs = {}
@@ -57,7 +43,7 @@ local function preprocess(rootfilename, files)
    end
 
    for line in out:gmatch('(.-)[\n\r]') do
-      local lineno_, filename_ = line:match('^#%s+(%d+)%s+"([^"]+)"')
+      local lineno_, filename_ = line:match(compiler.lineregexp)
       if lineno_ and filename_ then
          endfile()
          lineno, lineoff, filename, nline = lineno_, 0, filename_, 0
@@ -99,7 +85,7 @@ local function finddefinitions(filename, defs, filters)
    end
    f:close()
 
-   local out = parse(tmpname)
+   local out = compiler.parse{filename=tmpname}
    if out then
       for line in out:gmatch('[^\n\r]+') do
          local var, val = line:match('^CPPFFILUADEF%s+VAR_(%S+)%s+(%S+)$')
